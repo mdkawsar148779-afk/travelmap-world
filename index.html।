@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TravelMap — Your World, Your Journey</title>
+
+<link rel="stylesheet"
+ href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: Arial, sans-serif;
+  background: #f3f7fb; color: #142238;
+}
+header {
+  background: #10233d; color: white;
+  padding: 22px 16px;
+}
+header h1 { margin: 0 0 8px; }
+header p { margin: 0; color: #c9d8e9; }
+main { max-width: 1000px; margin: auto; padding: 16px; }
+.stats {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 12px; margin-bottom: 14px;
+}
+.card {
+  background: white; padding: 16px;
+  border-radius: 14px; box-shadow: 0 2px 10px #10233d12;
+}
+.label { color: #617187; font-size: 13px; }
+.value { font-size: 27px; font-weight: bold; margin-top: 8px; }
+input, button {
+  font: inherit; padding: 12px; border-radius: 9px;
+}
+input { width: 100%; border: 1px solid #cbd5e1; }
+button {
+  border: 0; cursor: pointer; background: #176b50;
+  color: white; font-weight: bold;
+}
+#map {
+  height: 55vh; min-height: 350px;
+  background: #dceaf1; border-radius: 14px;
+  overflow: hidden;
+}
+.hint { color: #617187; font-size: 13px; line-height: 1.6; }
+#countryList { line-height: 1.9; overflow-wrap: anywhere; }
+footer { padding: 22px; text-align: center; color: #617187; }
+</style>
+</head>
+
+<body>
+<header>
+  <h1>🌍 TravelMap</h1>
+  <p>Your world, your journey.</p>
+</header>
+
+<main>
+  <div class="stats">
+    <div class="card">
+      <div class="label">COUNTRIES VISITED</div>
+      <div class="value" id="count">0</div>
+    </div>
+    <div class="card">
+      <div class="label">WORLD EXPLORED</div>
+      <div class="value" id="percent">0%</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <input id="search" placeholder="Search a country...">
+    <p class="hint">
+      Tap a country on the map to mark it as visited.
+      Tap it again to remove it.
+    </p>
+    <button id="reset" type="button">Reset my map</button>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="card" style="margin-top:14px">
+    <h3>My visited countries</h3>
+    <div id="countryList">No countries selected yet.</div>
+  </div>
+
+  <p class="hint">
+    Prototype: your selections are stored only in this browser.
+    Country boundaries and names come from an external map dataset.
+  </p>
+</main>
+
+<footer>TravelMap · Explore the world, one country at a time.</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const TOTAL_COUNTRIES = 195;
+const STORAGE_KEY = "travelmap-visited-v1";
+
+let visited = new Set();
+try {
+  visited = new Set(JSON.parse(
+    localStorage.getItem(STORAGE_KEY) || "[]"
+  ));
+} catch (e) {
+  visited = new Set();
+}
+
+const map = L.map("map").setView([20, 0], 2);
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 7
+}).addTo(map);
+
+let countriesLayer;
+let features = [];
+
+function countryName(feature) {
+  const p = feature.properties || {};
+  return p.ADMIN || p.name || p.NAME || p.name_en || "Unknown country";
+}
+
+function styleCountry(feature) {
+  const name = countryName(feature);
+  const selected = visited.has(name);
+  return {
+    color: "#ffffff",
+    weight: 0.7,
+    fillColor: selected ? "#20a675" : "#b8cadb",
+    fillOpacity: selected ? 0.9 : 0.8
+  };
+}
+
+function updateStats() {
+  const count = visited.size;
+  const percent = Math.min(
+    100, Math.round(count / TOTAL_COUNTRIES * 100)
+  );
+
+  document.getElementById("count").textContent =
+    count + " / " + TOTAL_COUNTRIES;
+  document.getElementById("percent").textContent = percent + "%";
+
+  document.getElementById("countryList").textContent =
+    count ? [...visited].sort().join(", ") : "No countries selected yet.";
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([...visited]));
+}
+
+function onEachCountry(feature, layer) {
+  const name = countryName(feature);
+  layer.bindTooltip(name);
+
+  layer.on("click", function () {
+    if (visited.has(name)) visited.delete(name);
+    else visited.add(name);
+
+    layer.setStyle(styleCountry(feature));
+    updateStats();
+  });
+}
+
+fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson")
+  .then(response => {
+    if (!response.ok) throw new Error("Map data could not load");
+    return response.json();
+  })
+  .then(data => {
+    features = data.features || [];
+    countriesLayer = L.geoJSON(data, {
+      style: styleCountry,
+      onEachFeature: onEachCountry
+    }).addTo(map);
+
+    updateStats();
+  })
+  .catch(() => {
+    document.getElementById("map").innerHTML =
+      "Map data could not load. Check your internet and refresh.";
+  });
+
+document.getElementById("search").addEventListener("input", function () {
+  if (!countriesLayer) return;
+
+  const query = this.value.trim().toLowerCase();
+  if (!query) return;
+
+  const match = features.find(f =>
+    countryName(f).toLowerCase().includes(query)
+  );
+
+  if (match) {
+    const layer = countriesLayer.getLayers().find(l =>
+      countryName(l.feature) === countryName(match)
+    );
+
+    if (layer) {
+      map.fitBounds(layer.getBounds(), { maxZoom: 5 });
+      layer.openTooltip();
+    }
+  }
+});
+
+document.getElementById("reset").addEventListener("click", function () {
+  if (!confirm("Clear all your visited countries?")) return;
+  visited.clear();
+  if (countriesLayer) countriesLayer.setStyle(styleCountry);
+  updateStats();
+});
+
+updateStats();
+</script>
+</body>
+</html>
